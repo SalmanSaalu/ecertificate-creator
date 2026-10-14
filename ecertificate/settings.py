@@ -13,25 +13,28 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 from pathlib import Path
 import os
 import django_heroku
+from dotenv import load_dotenv,dotenv_values
+
+
 # from decouple import config
 
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(load_dotenv(BASE_DIR / ".env"))
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY ='django-insecure-9b$^bvtwsz#ouu1o%8gow*&gmy2-fy*$-$b0wzht$k&a7+$smk'
+SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
 ALLOWED_HOSTS = ['ecertificate-creator.herokuapp.com']
-
 
 # Application definition
 
@@ -83,13 +86,15 @@ WSGI_APPLICATION = 'ecertificate.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
 
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'ecertificate',
-        'USER': 'postgres',
-        'PASSWORD' :'1234',
+        'NAME': os.getenv('NAME'),
+        'USER': os.getenv('USER'),
+        'PASSWORD' :os.getenv('PASSWORD'),
         'HOST':'localhost',
+        'PORT': os.getenv('PORT',5433)
     }
 }
 
@@ -147,8 +152,8 @@ django_heroku.settings(locals())
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 MAILER_EMAIL_BACKEND = EMAIL_BACKEND
 EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_HOST_PASSWORD = "kwotwwrnwchvwloh"
-EMAIL_HOST_USER = "salmansaalu10@gmail.com"
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
+EMAIL_HOST_USER = os.getenv('MAIL_HOST_USER')
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
