@@ -1,13 +1,12 @@
 
-import re
 import logging
-from pathlib import Path
 import os
-from dotenv import load_dotenv
-load_dotenv()
-import pandas as pd
-import requests
+import re
+import time
+from pathlib import Path
 
+import pandas as pd
+from dotenv import load_dotenv
 from pptx import Presentation
 
 from django.conf import settings
@@ -22,21 +21,28 @@ from .convter import ppt2pdf, export_pdf
 from home.models import statusdetails
 
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(settings.BASE_DIR)
 MEDIA_DIR = BASE_DIR / "media"
 OUTPUT_DIR = MEDIA_DIR / "after_fetch"
-
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+DEBUG_DIR = OUTPUT_DIR / "debug"
+DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def first(request):
     return render(request, "index.html")
 
 
+def normalize_field(value):
+    """Normalize a field name for comparison."""
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+
 def get_placeholders(presentation):
-    """Find placeholders such as <Name> and <Email> in a PPTX."""
+    """Find placeholders such as <name>, <grade>, and <event>."""
     placeholders = []
 
     for slide in presentation.slides:
@@ -52,13 +58,7 @@ def get_placeholders(presentation):
 
 
 def replace_placeholders(presentation, replacements):
-    """
-    Replace placeholders in slide text.
-
-    Setting paragraph.text may change the original run-level formatting
-    within that paragraph, but avoids failures when a placeholder is
-    split across multiple PowerPoint text runs.
-    """
+    """Replace placeholders independently in the supplied presentation."""
     for slide in presentation.slides:
         for shape in slide.shapes:
             if not shape.has_text_frame:
@@ -77,6 +77,99 @@ def replace_placeholders(presentation, replacements):
                     paragraph.text = updated_text
 
 
+def build_row_replacements(row, placeholders, column_mapping):
+    """
+    Build replacement values from ONE CSV row.
+
+    column_mapping maps each PowerPoint placeholder to its CSV column.
+    """
+    replacements = {}
+
+    for placeholder in placeholders:
+        column = column_mapping[placeholder]
+        value = row[column]
+
+        if pd.isna(value):
+            value = ""
+
+        replacements[placeholder] = str(value)
+
+    return replacements
+
+
+def find_recipient(row, email_column):
+    """Get the email address from the current CSV row's email column."""
+    value = row[email_column]
+
+    if pd.isna(value):
+        return None
+
+    recipient = str(value).strip()
+
+    if not re.fullmatch(
+        r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
+        r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+",
+        recipient,
+    ):
+        return None
+
+    return recipient
+
+
+def cleanup_file(path, attempts=5):
+    """Try to remove a temporary file, including after a brief Windows lock."""
+    if path is None:
+        return
+
+    for attempt in range(attempts):
+        try:
+            if path.exists():
+                path.unlink()
+            return
+
+        except PermissionError:
+            if attempt < attempts - 1:
+                time.sleep(1)
+            else:
+                logger.warning(
+                    "Could not remove temporary file: %s",
+                    path,
+                    exc_info=True,
+                )
+
+        except OSError:
+            logger.warning(
+                "Could not remove temporary file: %s",
+                path,
+                exc_info=True,
+            )
+            return
+
+
+def log_presentation_contents(presentation, stage, row_number):
+    """Print all slide text so we can verify each certificate."""
+    logger.warning(
+        "========== CERTIFICATE DEBUG | ROW %s | %s ==========",
+        row_number,
+        stage,
+    )
+
+    for slide_number, slide in enumerate(
+        presentation.slides, start=1
+    ):
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                text = shape.text.strip()
+                if text:
+                    logger.warning(
+                        "ROW %s | SLIDE %s | TEXT: %r",
+                        row_number,
+                        slide_number,
+                        text,
+                    )
+
+    logger.warning("========== END CERTIFICATE DEBUG ==========")
+
 
 
 class issueCertificate(View):
@@ -91,7 +184,7 @@ class issueCertificate(View):
         if not uploaded_csv or not uploaded_template:
             messages.error(
                 request,
-                "Please upload both a CSV file and a PowerPoint template."
+                "Please upload both a CSV file and a PowerPoint template.",
             )
             return render(request, "issuecertificate.html")
 
@@ -99,42 +192,30 @@ class issueCertificate(View):
             messages.error(request, "Please upload a valid CSV file.")
             return render(request, "issuecertificate.html")
 
-        if not uploaded_template.name.lower().endswith(
-            (".ppt", ".pptx")
-        ):
+        if not uploaded_template.name.lower().endswith(".pptx"):
             messages.error(
                 request,
-                "Please upload a PowerPoint template."
+                "Please save your PowerPoint template as .pptx "
+                "and upload it again.",
             )
             return render(request, "issuecertificate.html")
 
         try:
             df = pd.read_csv(uploaded_csv)
+            df.columns = [str(column).strip() for column in df.columns]
 
             if df.empty:
                 messages.error(request, "The CSV file contains no data.")
                 return render(request, "issuecertificate.html")
 
-            # Your existing template uses forexcel for its column choices.
-            forexcel = [str(column) for column in df.columns]
-
-            # python-pptx supports PPTX, not legacy binary PPT files.
-            if not uploaded_template.name.lower().endswith(".pptx"):
-                messages.error(
-                    request,
-                    "Please save your PowerPoint template as .pptx "
-                    "and upload it again."
-                )
-                return render(request, "issuecertificate.html")
-
             presentation = Presentation(uploaded_template)
-            fortemplate = get_placeholders(presentation)
+            placeholders = get_placeholders(presentation)
 
-            if not fortemplate:
+            if not placeholders:
                 messages.error(
                     request,
                     "No placeholders were found. Use placeholders "
-                    "such as <Name> or <Course> in the template."
+                    "such as <name>, <grade>, <event>, and <date>.",
                 )
                 return render(request, "issuecertificate.html")
 
@@ -146,17 +227,17 @@ class issueCertificate(View):
             beforefetch.objects.create(
                 excel_file_upload=uploaded_csv,
                 template_file_upload=uploaded_template,
-                uniquename=unique_id
+                uniquename=unique_id,
             )
 
             return render(
                 request,
                 "certificateparttwo.html",
                 {
-                    "forexcel": forexcel,
-                    "fortemplate": fortemplate,
+                    "forexcel": list(df.columns),
+                    "fortemplate": placeholders,
                     "de": unique_id,
-                }
+                },
             )
 
         except Exception:
@@ -164,7 +245,7 @@ class issueCertificate(View):
             messages.error(
                 request,
                 "Could not read the CSV or PowerPoint template. "
-                "Check the server log for details."
+                "Check the server log for details.",
             )
             return render(request, "issuecertificate.html")
 
@@ -184,198 +265,292 @@ class Certificateparttwo(View):
         try:
             upload = beforefetch.objects.get(uniquename=event_id)
 
-            # Use the saved file paths, not the original upload objects.
             with upload.excel_file_upload.open("rb") as csv_file:
                 df = pd.read_csv(csv_file)
+
+            # Clean headers without changing the actual column names.
+            df.columns = [str(column).strip() for column in df.columns]
 
             if df.empty:
                 messages.error(request, "The CSV file contains no data.")
                 return redirect("/")
 
+            # Identify the email column explicitly.
+            email_columns = [
+                column
+                for column in df.columns
+                if normalize_field(column) == "email"
+            ]
+
+            if not email_columns:
+                messages.error(
+                    request,
+                    "Your CSV file must contain an email column.",
+                )
+                return redirect("/")
+
+            email_column = email_columns[0]
+
             template_path = upload.template_file_upload.path
 
-            # Load the original presentation for placeholder discovery.
             original_presentation = Presentation(template_path)
             placeholders = get_placeholders(original_presentation)
 
             if not placeholders:
                 messages.error(
                     request,
-                    "No placeholders were found in the PowerPoint template."
+                    "No placeholders were found in the PowerPoint template.",
                 )
                 return redirect("/")
 
-            # Match each placeholder to the column selected in the form.
-            replacements_by_placeholder = {}
+            # Match placeholders to CSV headers by name.
+            normalized_columns = {}
 
-            for index, placeholder in enumerate(placeholders, start=1):
-                selected_column = request.POST.get(str(index))
+            for column in df.columns:
+                normalized = normalize_field(column)
 
-                if selected_column not in [
-                    str(column) for column in df.columns
-                ]:
-                    messages.error(
-                        request,
-                        f"Invalid or missing CSV column selected "
-                        f"for {placeholder}."
+                if normalized in normalized_columns:
+                    raise ValueError(
+                        f"Duplicate CSV headers after normalization: "
+                        f"{column!r}"
                     )
-                    return redirect("/")
 
-                replacements_by_placeholder[placeholder] = selected_column
+                normalized_columns[normalized] = column
+
+            column_mapping = {}
+
+            for placeholder in placeholders:
+                field_name = normalize_field(
+                    placeholder.strip("<>")
+                )
+
+                if field_name not in normalized_columns:
+                    raise ValueError(
+                        f"PowerPoint placeholder {placeholder!r} "
+                        f"does not match a CSV column. "
+                        f"CSV columns: {list(df.columns)}"
+                    )
+
+                column_mapping[placeholder] = (
+                    normalized_columns[field_name]
+                )
 
             sent_count = 0
             failed_count = 0
 
-            # Generate one certificate for each CSV row.
-            for row_number, (_, row) in enumerate(df.iterrows(), start=1):
-                recipient = None
-
-                # Find the first plausible email address in the row.
-                for cell in row:
-                    candidate = str(cell).strip()
-
-                    if re.fullmatch(
-                        r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
-                        r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+",
-                        candidate
-                    ):
-                        recipient = candidate
-                        break
+            # Each CSV row creates a separate certificate and email.
+            for row_number, (_, row) in enumerate(
+                df.iterrows(), start=1
+            ):
+                recipient = find_recipient(row, email_column)
 
                 if not recipient:
-                    logger.warning(
-                        "Row %s has no email address; skipping.",
-                        row_number
+                    logger.error(
+                        "Skipping row %s: invalid email address.",
+                        row_number,
                     )
                     failed_count += 1
                     continue
 
-                pdf_path = None
                 pptx_path = None
+                pdf_path = None
 
                 try:
-                    # Use a fresh presentation for every recipient.
+                    # CRITICAL: replacements come from the current row.
+                    replacements = build_row_replacements(
+                        row,
+                        placeholders,
+                        column_mapping,
+                    )
+
+                    logger.info(
+                        "ROW %s | RECIPIENT: %s | DATA: %s",
+                        row_number,
+                        recipient,
+                        replacements,
+                    )
+
+                    # Reopen the ORIGINAL template for every recipient.
                     presentation = Presentation(template_path)
 
-                    replacements = {}
+                    replace_placeholders(
+                        presentation,
+                        replacements,
+                    )
 
-                    for placeholder, column in (
-                        replacements_by_placeholder.items()
-                    ):
-                        value = row[column]
-
-                        if pd.isna(value):
-                            value = ""
-
-                        replacements[placeholder] = value
-
-                    replace_placeholders(presentation, replacements)
-
-                    # Unique filenames prevent certificates from
-                    # overwriting one another.
-                    filename = get_random_string(20)
+                    # Give every generated file a unique name.
+                    filename = get_random_string(24)
 
                     pptx_path = OUTPUT_DIR / f"{filename}.pptx"
                     pdf_path = OUTPUT_DIR / f"{filename}.pdf"
 
                     presentation.save(str(pptx_path))
+                    # Verify the actual saved PowerPoint, not just in-memory values.
+                    check_presentation = Presentation(str(pptx_path))
 
-                    # This existing helper is expected to upload/convert
-                    # the PPTX and return a Google Slides presentation ID.
+                    log_presentation_contents(
+                        check_presentation,
+                        "SAVED PPTX BEFORE GOOGLE UPLOAD",
+                        row_number,
+                    )
+
+                    # Preserve a copy for manual inspection.
+                    debug_pptx = DEBUG_DIR / f"row_{row_number}_certificate.pptx"
+                    check_presentation.save(str(debug_pptx))
+
+                    # Reopen the saved PPTX and check the actual content.
+                    check_presentation = Presentation(str(pptx_path))
+
+                    generated_text = "\n".join(
+                        shape.text
+                        for slide in check_presentation.slides
+                        for shape in slide.shapes
+                        if shape.has_text_frame
+                    )
+
+                    for placeholder in placeholders:
+                        if placeholder in generated_text:
+                            raise ValueError(
+                                f"Placeholder {placeholder!r} remains "
+                                f"unreplaced in row {row_number}."
+                            )
+
+                    logger.info(
+                        "LOCAL PPTX verified for row %s: %s",
+                        row_number,
+                        pptx_path.name,
+                    )
+
+                    # Upload THIS recipient's generated PPTX.
                     presentation_id = ppt2pdf(
                         str(pptx_path),
                         pptx_path.name,
                         folder_id=os.getenv("GOOGLE_DRIVE_FOLDER_ID"),
                     )
 
-                    pdf_data = export_pdf(presentation_id)
+                    logger.info(
+                        "ROW %s | GOOGLE SLIDES ID: %s",
+                        row_number,
+                        presentation_id,
+                    )
 
+                    # Export the same uploaded presentation ID.
+                    pdf_data = export_pdf(presentation_id)
+                    logger.warning(
+                    "ROW %s | Recipient: %s | Google Slides ID: %s | "
+                    "PDF size: %s bytes | PDF signature: %r",
+                    row_number,
+                    recipient,
+                    presentation_id,
+                    len(pdf_data),
+                    pdf_data[:8],
+                    )
+
+                    # Preserve the exact PDF that will be attached to the email.
+                    debug_pdf = DEBUG_DIR / f"row_{row_number}_certificate.pdf"
+                    debug_pdf.write_bytes(pdf_data)
+
+                    if not pdf_data.startswith(b"%PDF-"):
+                        raise ValueError(
+                            "Google Drive returned invalid PDF data."
+                        )
 
                     pdf_path.write_bytes(pdf_data)
 
-                    # Confirm that the saved attachment is also a PDF.
-                    if pdf_path.read_bytes()[:5] != b"%PDF-":
-                        raise ValueError(
-                            "The saved certificate is not a valid PDF."
-                        )
-
-                    email = EmailMessage(
-                        subject="Your Certificate",
-                        body=(
-                            "Congratulations! Please find your "
-                            "certificate attached."
-                        ),
+                    # Send the generated PDF to THIS row's recipient.
+                    #
+                    email_message = EmailMessage(
+                        subject=f"Your Certificate - Row {row_number}",
+                        body=f"Hello,\n\nPlease find your certificate attached.\n\nRegards",
                         from_email=settings.DEFAULT_FROM_EMAIL,
                         to=[recipient],
                     )
 
-                    email.attach(
-                        filename="certificate.pdf",
-                        content=pdf_data,
-                        mimetype="application/pdf",
+                    # Attach the PDF generated for THIS row
+                    attachment_name = f"certificate_row_{row_number}.pdf"
+
+                    email_message.attach(
+                        attachment_name,
+                        bytes(pdf_data),
+                        "application/pdf",
                     )
 
-                    # Send only after PDF validation succeeds.
-                    result = email.send(fail_silently=False)
+                    # Log attachment details before sending
+                    logger.warning(
+                        "SENDING EMAIL | Row: %s | Recipient: %s | "
+                        "Attachment: %s | Size: %s bytes",
+                        row_number,
+                        recipient,
+                        attachment_name,
+                        len(pdf_data),
+                    )
 
-                    if result != 1:
-                        raise RuntimeError(
-                            "Django did not confirm that the email was sent."
-                        )
+                    email_message.send(fail_silently=False)
+
+                    logger.warning(
+                        "EMAIL SENT | Row: %s | Recipient: %s",
+                        row_number,
+                        recipient,
+                    )
+
+                    #
+
+                    # if email_result != 1:
+                    #     raise RuntimeError(
+                    #         "Django did not confirm email submission."
+                    #     )
 
                     statusdetails.objects.create(
                         email=recipient,
                         statusnamecheck=request.user.id,
-                        send=1
+                        send=1,
                     )
 
                     sent_count += 1
 
+                    logger.info(
+                        "Email submitted for row %s to %s",
+                        row_number,
+                        recipient,
+                    )
+
                 except Exception:
                     logger.exception(
-                        "Certificate generation/email failed for CSV row %s.",
-                        row_number
+                        "Failed to generate/send certificate "
+                        "for row %s to %s",
+                        row_number,
+                        recipient,
                     )
 
                     failed_count += 1
 
-                    # Record the failure when the model permits it.
                     try:
                         statusdetails.objects.create(
                             email=recipient,
                             statusnamecheck=request.user.id,
-                            send=0
+                            send=0,
                         )
                     except Exception:
                         logger.exception(
-                            "Could not save failure status for %s.",
-                            recipient
+                            "Could not save failure status for %s",
+                            recipient,
                         )
 
                 finally:
-                    # Remove temporary files without affecting
-                    # the email attachment already held in memory.
-                    for path in (pptx_path, pdf_path):
-                        if path and path.exists():
-                            try:
-                                path.unlink()
-                            except OSError:
-                                logger.exception(
-                                    "Could not remove temporary file %s",
-                                    path
-                                )
+                    cleanup_file(pptx_path)
+                    cleanup_file(pdf_path)
 
             messages.success(
                 request,
                 f"Certificate processing finished. "
                 f"Emails sent: {sent_count}. "
-                f"Failed or skipped: {failed_count}."
+                f"Failed or skipped: {failed_count}.",
             )
 
         except beforefetch.DoesNotExist:
             messages.error(
                 request,
-                "The certificate request was not found. Please start again."
+                "The certificate request was not found. Please start again.",
             )
 
         except Exception:
@@ -383,20 +558,21 @@ class Certificateparttwo(View):
             messages.error(
                 request,
                 "Certificate processing failed. Check the server logs "
-                "for the detailed error."
+                "for details.",
             )
 
         return redirect("/")
-        
+
 
 def status(request):
-    ee = request.user.id
-    ff = statusdetails.objects.filter(
-        statusnamecheck=ee
+    user_id = request.user.id
+
+    records = statusdetails.objects.filter(
+        statusnamecheck=user_id
     ).order_by("-dateadded")
 
     return render(
         request,
         "status.html",
-        {"statusdetails": ff}
+        {"statusdetails": records},
     )

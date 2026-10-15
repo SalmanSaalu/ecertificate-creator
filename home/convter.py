@@ -1,10 +1,20 @@
 
+import io
+import random
+import time
 from pathlib import Path
+
+import httplib2
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
+from googleapiclient.http import (
+    MediaFileUpload,
+    MediaIoBaseDownload,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,14 +33,16 @@ def get_drive_service():
         )
 
     creds = Credentials.from_authorized_user_file(
-        str(TOKEN_PATH), SCOPES
+        str(TOKEN_PATH),
+        SCOPES,
     )
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
             TOKEN_PATH.write_text(
-                creds.to_json(), encoding="utf-8"
+                creds.to_json(),
+                encoding="utf-8",
             )
         else:
             raise RuntimeError(
@@ -38,24 +50,35 @@ def get_drive_service():
                 "Run google_auth_setup.py again."
             )
 
-    return build("drive", "v3", credentials=creds)
+    http = AuthorizedHttp(
+        creds,
+        http=httplib2.Http(timeout=HTTP_TIMEOUT),
+    )
 
-
-
-import random
-import time
-from pathlib import Path
-
-from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
+    return build(
+        "drive",
+        "v3",
+        http=http,
+        cache_discovery=False,
+    )
 
 
 def ppt2pdf(input_file_path, nn, folder_id=None):
+    """
+    Upload a PPTX to Google Drive, convert it to Google Slides,
+    and return the Google Slides presentation ID.
+    """
     input_path = Path(input_file_path)
 
     if not input_path.is_file():
         raise FileNotFoundError(
             f"PowerPoint file not found: {input_path}"
+        )
+
+    if input_path.suffix.lower() != ".pptx":
+        raise ValueError(
+            "Only .pptx files are supported. "
+            "Save the template as PowerPoint Presentation (.pptx)."
         )
 
     service = get_drive_service()
@@ -68,17 +91,23 @@ def ppt2pdf(input_file_path, nn, folder_id=None):
     if folder_id:
         metadata["parents"] = [folder_id]
 
+    last_error = None
+
     for attempt in range(1, 4):
-        media = MediaFileUpload(
-            str(input_path),
-            mimetype=(
-                "application/vnd.openxmlformats-officedocument."
-                "presentationml.presentation"
-            ),
-            resumable=True,
-        )
+        media = None
 
         try:
+            # Use a fresh upload object for every attempt.
+            media = MediaFileUpload(
+                str(input_path),
+                mimetype=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "presentationml.presentation"
+                ),
+                resumable=True,
+                chunksize=1024 * 1024,
+            )
+
             result = (
                 service.files()
                 .create(
@@ -86,7 +115,7 @@ def ppt2pdf(input_file_path, nn, folder_id=None):
                     media_body=media,
                     fields="id,name,mimeType",
                 )
-                .execute(num_retries=0)
+                .execute(num_retries=2)
             )
 
             presentation_id = result.get("id")
@@ -103,35 +132,58 @@ def ppt2pdf(input_file_path, nn, folder_id=None):
                     f"File was not converted to Google Slides: {result}"
                 )
 
-            print("Converted presentation:", result.get("name"))
+            print(
+                "Converted presentation:",
+                result.get("name"),
+            )
             print("Presentation ID:", presentation_id)
 
             return presentation_id
 
-        except HttpError as exc:
-            status = exc.resp.status
-            print(
-                f"Google Drive upload attempt {attempt}/3 failed: "
-                f"HTTP {status}: {exc.content!r}"
+        except (HttpError, TimeoutError, OSError) as exc:
+            last_error = exc
+
+            status = (
+                getattr(exc.resp, "status", None)
+                if isinstance(exc, HttpError)
+                else None
             )
 
-            if status not in (500, 502, 503, 504) or attempt == 3:
+            # Do not retry permission, authentication, or other
+            # permanent HTTP errors.
+            retryable = (
+                status in (408, 429, 500, 502, 503, 504)
+                or isinstance(exc, (TimeoutError, OSError))
+            )
+
+            print(
+                f"Google Drive upload attempt {attempt}/3 failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            if not retryable or attempt == 3:
                 raise
 
-            time.sleep(min(2 ** attempt + random.random(), 10))
+            time.sleep(
+                min(2 ** attempt + random.random(), 10)
+            )
 
-    raise RuntimeError("Google Drive upload failed after retries.")
+        finally:
+            # Close the upload file handle before another attempt
+            # or before the caller tries to delete the PPTX.
+            if media is not None:
+                try:
+                    media._fd.close()
+                except (AttributeError, OSError):
+                    pass
 
-
-
-import io
-
-from googleapiclient.http import MediaIoBaseDownload
+    raise RuntimeError(
+        "Google Drive upload failed after retries."
+    ) from last_error
 
 
 def export_pdf(presentation_id):
-    """Export a Google Slides presentation and return PDF bytes."""
-
+    """Export Google Slides as PDF bytes."""
     if not presentation_id or str(presentation_id).strip() == "0":
         raise ValueError(
             f"Invalid Google Slides ID: {presentation_id!r}"
@@ -145,11 +197,15 @@ def export_pdf(presentation_id):
     )
 
     pdf_buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(pdf_buffer, request)
+    downloader = MediaIoBaseDownload(
+        pdf_buffer,
+        request,
+    )
 
     done = False
+
     while not done:
-        _, done = downloader.next_chunk()
+        _, done = downloader.next_chunk(num_retries=2)
 
     pdf_data = pdf_buffer.getvalue()
 
