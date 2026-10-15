@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 import django_heroku
 from dotenv import load_dotenv,dotenv_values
+import dj_database_url
 
 
 # from decouple import config
@@ -90,16 +91,24 @@ WSGI_APPLICATION = 'ecertificate.wsgi.application'
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
 
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('NAME'),
-        'USER': os.getenv('USER'),
-        'PASSWORD' :os.getenv('PASSWORD'),
-        'HOST':'localhost',
-        'PORT': os.getenv('PORT',5433)
+if os.getenv("DATABASE_URL"):
+    DATABASES = {
+        "default": dj_database_url.config(
+            conn_max_age=600,
+            default=os.getenv("DATABASE_URL"),
+        )
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("NAME"),
+            "USER": os.getenv("USER"),
+            "PASSWORD": os.getenv("PASSWORD"),
+            "HOST": "localhost",
+            "PORT": os.getenv("PORT", "5433"),
+        }
+    }
 
 
 # Password validation

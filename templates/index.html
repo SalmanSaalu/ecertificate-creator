@@ -145,6 +145,36 @@
           font-size: 20px;
         }
         
+        .django-messages {
+            width: 80%;
+            margin: 20px auto;
+            text-align: center;
+            position: relative;
+            z-index: 10;
+        }
+
+        .django-message {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+        }
+
+        .django-message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        .django-message.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .django-message.warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        
     </style>
 </head>
 <body>
@@ -175,6 +205,18 @@
         
         </div>
     </div>
+    {% if messages %}
+        <div class="django-messages">
+            {% for message in messages %}
+                <div class="django-message {{ message.tags }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+
+
     <div style="background-image: url(&quot;{% static 'image/v.jpg' %}&quot;);
                 background-repeat: no-repeat;
                 background-size: cover;
