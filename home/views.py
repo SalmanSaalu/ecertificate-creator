@@ -573,7 +573,6 @@ class Certificateparttwo(View):
                         send=1,
                     )
 
-                    sent_count += 1
 
                     logger.warning(
                         "EMAIL SENT | Row: %s | Recipient: %s",
