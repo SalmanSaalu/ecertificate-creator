@@ -20,6 +20,13 @@ from .models import beforefetch
 from .convter import ppt2pdf, export_pdf
 from home.models import statusdetails
 
+import base64
+from email.message import EmailMessage
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -31,6 +38,92 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DEBUG_DIR = OUTPUT_DIR / "debug"
 DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
+def get_gmail_service():
+    """
+    Create a Gmail API service using a separate Gmail token.
+    Does not modify the existing Google Drive token.
+    """
+
+    token_setting = os.getenv("GMAIL_TOKEN_FILE")
+
+    if not token_setting:
+        raise ValueError("GMAIL_TOKEN_FILE is not configured.")
+
+    token_path = Path(token_setting)
+
+    if not token_path.is_absolute():
+        token_path = Path(settings.BASE_DIR) / token_path
+
+    if not token_path.is_file():
+        raise FileNotFoundError(
+            f"Gmail token file not found: {token_path}"
+        )
+
+    credentials = Credentials.from_authorized_user_file(
+        str(token_path),
+        scopes=["https://www.googleapis.com/auth/gmail.send"],
+    )
+
+    if not credentials.refresh_token:
+        raise ValueError(
+            "Gmail token has no refresh token. "
+            "Reauthorize the Gmail account."
+        )
+
+    if not credentials.valid:
+        credentials.refresh(Request())
+
+    return build(
+        "gmail",
+        "v1",
+        credentials=credentials,
+        cache_discovery=False,
+    )
+
+
+def send_certificate_email(recipient, pdf_data, attachment_name, row_number):
+    """Send a certificate PDF through the Gmail API over HTTPS."""
+
+    message = EmailMessage()
+    message["To"] = recipient
+    message["Subject"] = f"Your Certificate - Row {row_number}"
+
+    message.set_content(
+        "Congratulations!\n\n"
+        "Please find your certificate attached to this email."
+    )
+
+    message.add_attachment(
+        pdf_data,
+        maintype="application",
+        subtype="pdf",
+        filename=attachment_name,
+    )
+
+    encoded_message = base64.urlsafe_b64encode(
+        message.as_bytes()
+    ).decode("utf-8")
+
+    service = get_gmail_service()
+
+    result = (
+        service.users()
+        .messages()
+        .send(
+            userId="me",
+            body={"raw": encoded_message},
+        )
+        .execute(num_retries=2)
+    )
+
+    logger.warning(
+        "GMAIL API ACCEPTED EMAIL | Row: %s | Recipient: %s | ID: %s",
+        row_number,
+        recipient,
+        result.get("id"),
+    )
+
+    return result
 
 def first(request):
     return render(request, "index.html")
@@ -459,33 +552,28 @@ class Certificateparttwo(View):
 
                     # Send the generated PDF to THIS row's recipient.
                     #
-                    email_message = EmailMessage(
-                        subject=f"Your Certificate - Row {row_number}",
-                        body=f"Hello,\n\nPlease find your certificate attached.\n\nRegards",
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        to=[recipient],
-                    )
-
-                    # Attach the PDF generated for THIS row
                     attachment_name = f"certificate_row_{row_number}.pdf"
 
-                    email_message.attach(
-                        attachment_name,
-                        bytes(pdf_data),
-                        "application/pdf",
-                    )
-
-                    # Log attachment details before sending
                     logger.warning(
-                        "SENDING EMAIL | Row: %s | Recipient: %s | "
-                        "Attachment: %s | Size: %s bytes",
+                        "SENDING EMAIL VIA GMAIL API | Row: %s | Recipient: %s",
                         row_number,
                         recipient,
-                        attachment_name,
-                        len(pdf_data),
                     )
 
-                    email_message.send(fail_silently=False)
+                    send_certificate_email(
+                        recipient=recipient,
+                        pdf_data=bytes(pdf_data),
+                        attachment_name=attachment_name,
+                        row_number=row_number,
+                    )
+
+                    statusdetails.objects.create(
+                        email=recipient,
+                        statusnamecheck=request.user.id,
+                        send=1,
+                    )
+
+                    sent_count += 1
 
                     logger.warning(
                         "EMAIL SENT | Row: %s | Recipient: %s",
