@@ -46,7 +46,7 @@ Visit the [E-Certificate Generator](https://ecertificate-creator-1.onrender.com/
 
 ### Step 2: Open the document upload page
 
-Navigate to the [Certificate Upload Page](https://ecertificate-creator-1.onrender.com/issuecertificate).
+Navigate to the Certificate Upload Page(for that please signup and signin)
 
 ### Step 3: Prepare your PowerPoint template
 
