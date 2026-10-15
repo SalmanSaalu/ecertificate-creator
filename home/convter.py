@@ -24,6 +24,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+HTTP_TIMEOUT = 180
+
 
 def get_drive_service():
     if not TOKEN_PATH.exists():
