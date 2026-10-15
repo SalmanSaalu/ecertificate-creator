@@ -12,8 +12,8 @@ idna==3.3
 setuptools==80.9.0
 wheel
 lxml==4.8.0
-numpy==1.22.4
-pandas==1.4.2
+numpy==1.26.4
+pandas==2.2.3
 Pillow==9.1.1
 ppt2pdf==0.0.3
 psycopg2-binary==2.9.3
