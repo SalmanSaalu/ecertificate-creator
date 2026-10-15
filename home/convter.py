@@ -24,35 +24,60 @@ TOKEN_PATH = Path(
         str(BASE_DIR / "token.json"),
     )
 )
+RUNTIME_TOKEN_PATH = Path("/tmp/token.json")
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 HTTP_TIMEOUT = 180
 
 
+
 def get_drive_service():
-    if not TOKEN_PATH.exists():
+    is_render = bool(os.environ.get("RENDER"))
+
+    token_path = TOKEN_PATH
+
+    if is_render:
+        if not TOKEN_PATH.exists():
+            raise FileNotFoundError(
+                f"OAuth token not found: {TOKEN_PATH}. "
+                "Check GOOGLE_TOKEN_FILE in Render."
+            )
+
+        # Copy the read-only Render secret to writable storage.
+        if not RUNTIME_TOKEN_PATH.exists():
+            RUNTIME_TOKEN_PATH.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            RUNTIME_TOKEN_PATH.write_bytes(
+                TOKEN_PATH.read_bytes()
+            )
+
+        token_path = RUNTIME_TOKEN_PATH
+
+    if not token_path.exists():
         raise FileNotFoundError(
-            f"OAuth token not found: {TOKEN_PATH}. "
-            "Run google_auth_setup.py first."
+            f"OAuth token not found: {token_path}. "
+            "Check your token.json configuration."
         )
 
     creds = Credentials.from_authorized_user_file(
-        str(TOKEN_PATH),
+        str(token_path),
         SCOPES,
     )
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            TOKEN_PATH.write_text(
+            token_path.write_text(
                 creds.to_json(),
                 encoding="utf-8",
             )
         else:
             raise RuntimeError(
                 "Google credentials are invalid. "
-                "Run google_auth_setup.py again."
+                "Check your OAuth token and refresh token."
             )
 
     http = AuthorizedHttp(
@@ -66,6 +91,7 @@ def get_drive_service():
         http=http,
         cache_discovery=False,
     )
+
 
 
 def ppt2pdf(input_file_path, nn, folder_id=None):
