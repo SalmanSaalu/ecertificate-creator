@@ -34,7 +34,10 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['ecertificate-creator.herokuapp.com']
+ALLOWED_HOSTS = [    'ecertificate-creator-1.onrender.com',
+    'ecertificate-creator.herokuapp.com',
+    'localhost',
+    '127.0.0.1',]
 
 # Application definition
 
