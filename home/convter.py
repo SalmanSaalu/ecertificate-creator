@@ -8,13 +8,11 @@ from googleapiclient.http import MediaFileUpload
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-TOKEN_PATH = Path(
-    os.environ.get(
-        "GOOGLE_TOKEN_FILE",
-        str(BASE_DIR / "token.json"),
-    )
-)
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+TOKEN_PATH = BASE_DIR / "token.json"
+
+SCOPES = [
+    "https://www.googleapis.com/auth/drive"
+]
 
 
 def get_drive_service():
