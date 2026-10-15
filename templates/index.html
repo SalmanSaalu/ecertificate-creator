@@ -175,7 +175,12 @@
         
         </div>
     </div>
-    <div style="background: url('/static/image/v.jpg');background-repeat: no-repeat;background-size: cover;height: 1000px; position: relative;">
+    <div style="background-image: url(&quot;{% static 'image/v.jpg' %}&quot;);
+                background-repeat: no-repeat;
+                background-size: cover;
+                background-position: center;
+                min-height: 1000px;
+                position: relative;">
       {% if user.is_authenticated %}
       
       <div style="width: 43%;margin: 0 auto;top: 12%;position: absolute;margin-left: 31%;background-color: white;border-radius: 11px;    box-shadow: 0px 1px 20px 0px #373754;">
