@@ -90,25 +90,26 @@ WSGI_APPLICATION = 'ecertificate.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
 
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-if os.getenv("DATABASE_URL"):
+if DATABASE_URL:
     DATABASES = {
         "default": dj_database_url.config(
-            conn_max_age=600,
-            default=os.getenv("DATABASE_URL"),
+        default=DATABASE_URL,
+        conn_max_age=600,
         )
     }
 else:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("NAME"),
-            "USER": os.getenv("USER"),
-            "PASSWORD": os.getenv("PASSWORD"),
-            "HOST": "localhost",
-            "PORT": os.getenv("PORT", "5433"),
-        }
+    "default": {
+    "ENGINE": "django.db.backends.postgresql",
+    "NAME": os.getenv("NAME"),
+    "USER": os.getenv("USER"),
+    "PASSWORD": os.getenv("PASSWORD"),
+    "HOST": os.getenv("HOST", "localhost"),
+    "PORT": os.getenv("PORT", "5433"),
     }
+}
 
 
 # Password validation
