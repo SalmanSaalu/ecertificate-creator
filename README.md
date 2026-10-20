@@ -9,6 +9,7 @@ The application replaces placeholders in a certificate template with individual 
 - **Website:** https://ecertificate-creator-1.onrender.com/
 - **Upload Documents for reference:** https://ecertificate-creator-1.onrender.com/issuecertificate](https://drive.google.com/drive/folders/1lMAB07UvwiavaC3yNzsCD-OAxaqMvW9e?usp=drive_link
 - **GitHub Repository:** https://github.com/SalmanSaalu/ecertificate-creator
+- **Demo Video** https://youtu.be/DOtzSVyJd94
 
 > The application is hosted on Render. Availability may vary depending on the service's deployment status and hosting plan.
 
