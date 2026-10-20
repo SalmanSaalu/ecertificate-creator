@@ -7,7 +7,7 @@ The application replaces placeholders in a certificate template with individual 
 ## 🌐 Live Application
 
 - **Website:** https://ecertificate-creator-1.onrender.com/
-- **Upload Documents for reference:** https://ecertificate-creator-1.onrender.com/issuecertificate](https://drive.google.com/drive/folders/1lMAB07UvwiavaC3yNzsCD-OAxaqMvW9e?usp=drive_link
+- **Upload Documents for reference:** [Associated template documents for upload in the website](https://drive.google.com/drive/folders/1lMAB07UvwiavaC3yNzsCD-OAxaqMvW9e?usp=drive_link)
 - **GitHub Repository:** https://github.com/SalmanSaalu/ecertificate-creator
 - **Demo Video** [Watch CourseTutor Demo](https://youtu.be/DOtzSVyJd94)
 
